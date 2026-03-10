@@ -34,8 +34,8 @@ require_once($config_path);
 if (!defined('DASHBOARD_PASSWORD') || DASHBOARD_PASSWORD === 'change-this-to-something-secure') {
     die('Please set DASHBOARD_PASSWORD in config.php');
 }
-if (!defined('SENDY_CONFIG_PATH') || !file_exists(SENDY_CONFIG_PATH)) {
-    die('SENDY_CONFIG_PATH in config.php points to a file that does not exist: ' . (defined('SENDY_CONFIG_PATH') ? SENDY_CONFIG_PATH : 'undefined'));
+if (!defined('DB_HOST') || !defined('DB_USER') || !defined('DB_PASS') || !defined('DB_NAME')) {
+    die('Please set DB_HOST, DB_USER, DB_PASS, and DB_NAME in config.php');
 }
 
 // ============= AUTH =============
@@ -69,25 +69,19 @@ if (!isset($_SESSION['dash_auth']) || $_SESSION['dash_auth'] !== true) {
 }
 
 // ============= DB CONNECTION =============
-require_once(SENDY_CONFIG_PATH);
-
 mysqli_report(MYSQLI_REPORT_OFF);
 
-if (isset($dbPort)) {
-    $mysqli = new mysqli($dbHost, $dbUser, $dbPass, $dbName, $dbPort);
+if (defined('DB_PORT')) {
+    $mysqli = new mysqli(DB_HOST, DB_USER, DB_PASS, DB_NAME, DB_PORT);
 } else {
-    $mysqli = new mysqli($dbHost, $dbUser, $dbPass, $dbName);
+    $mysqli = new mysqli(DB_HOST, DB_USER, DB_PASS, DB_NAME);
 }
 
 if ($mysqli->connect_error) {
     die('Database connection failed: ' . $mysqli->connect_error);
 }
-$charset = $charset ?? 'utf8';
+$charset = defined('DB_CHARSET') ? DB_CHARSET : 'utf8';
 mysqli_set_charset($mysqli, $charset);
-
-if (defined('SENDY_SHORT_PATH') && file_exists(SENDY_SHORT_PATH)) {
-    require_once(SENDY_SHORT_PATH);
-}
 
 // ============= FILTERS =============
 $filter_source = $_GET['source'] ?? 'all';

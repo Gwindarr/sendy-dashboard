@@ -14,12 +14,13 @@
 // Dashboard login password
 define('DASHBOARD_PASSWORD', 'change-this-to-something-secure');
 
-// Absolute path to your Sendy installation's config.php
-// This file contains your database credentials ($dbHost, $dbUser, $dbPass, $dbName)
-define('SENDY_CONFIG_PATH', '/home/user/public_html/sendy/includes/config.php');
-
-// Absolute path to Sendy's short.php helper (usually in same includes/helpers/ folder)
-define('SENDY_SHORT_PATH', '/home/user/public_html/sendy/includes/helpers/short.php');
+// Database credentials (same values as in your Sendy config)
+define('DB_HOST', 'localhost');
+define('DB_USER', 'your_db_user');
+define('DB_PASS', 'your_db_password');
+define('DB_NAME', 'your_db_name');
+// define('DB_PORT', 3306); // Uncomment if using a non-default port
+// define('DB_CHARSET', 'utf8'); // Default: utf8
 
 // Optional: specify which autoresponder sequence to track opens for.
 // Set to 0 to auto-detect (uses the sequence with the most emails).
