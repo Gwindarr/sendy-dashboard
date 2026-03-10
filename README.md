@@ -16,7 +16,7 @@ Sendy tracks autoresponder opens in its database but doesn't expose this data in
 
 ## Why this exists
 
-If you're running Google Ads to a Sendy-powered email list, you need to know which ad clicks turn into real subscribers vs. bots. Google's conversion tracking counts the signup, but can't tell you if the person actually opens your emails. This dashboard can.
+If you're running Google Ads to a Sendy-powered email list, you need to know which ad clicks turn into real subscribers vs. bots. Google's conversion tracking counts the signup, but can't tell you if the person actually opens your autoresponder emails. 
 
 ## Requirements
 
@@ -136,7 +136,7 @@ If your signup forms pass the Google Ads click ID (`gclid`) in the referrer fiel
 - **Read-only** — this dashboard never writes to or modifies your database
 - **Independent** — does not include, require, or modify any Sendy source files
 - **Place outside Sendy's folder** — so you don't lose it when upgrading Sendy
-- **500 subscribers per page** — hard limit to keep queries fast. Use filters to narrow results.
+- **This project is not affiliated with or endorsed by Sendy or Hex.
 
 ## License
 
