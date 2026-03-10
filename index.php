@@ -21,6 +21,7 @@ if (isset($_GET['logout'])) {
 
 // ============= HANDLE CSV EXPORT FLAG (must be before any output) =============
 $is_export = isset($_GET['export']) && $_GET['export'] === 'csv';
+$is_gads_export = isset($_GET['export']) && $_GET['export'] === 'gads';
 
 // ============= CONFIG =============
 // Look for config.php in same directory, or override with SENDY_DASHBOARD_CONFIG env var
@@ -85,11 +86,20 @@ mysqli_set_charset($mysqli, $charset);
 
 // ============= FILTERS =============
 $filter_source = $_GET['source'] ?? 'all';
-$filter_days = (int)($_GET['days'] ?? 7);
-$filter_days = max(1, min(365, $filter_days));
+$filter_days = $_GET['days'] ?? '7';
+$filter_from = $_GET['from'] ?? '';
+$filter_to = $_GET['to'] ?? '';
 $filter_list = $_GET['list'] ?? 'all';
 $filter_status = $_GET['status'] ?? 'all';
 $search_email = trim($_GET['email'] ?? '');
+
+// Determine if using custom date range
+$use_custom_range = ($filter_days === 'custom' && $filter_from !== '');
+if (!$use_custom_range) {
+    $filter_days_num = max(1, min(365, (int)$filter_days));
+} else {
+    $filter_days_num = 0;
+}
 
 // ============= GET LISTS =============
 $lists = [];
@@ -130,8 +140,16 @@ $total_ar_emails = count($ar_emails);
 $custom_campaigns = isset($CUSTOM_CAMPAIGNS) && is_array($CUSTOM_CAMPAIGNS) ? $CUSTOM_CAMPAIGNS : [];
 
 // ============= BUILD SUBSCRIBER QUERY =============
-$cutoff = time() - ($filter_days * 86400);
-$where = ["s.join_date >= {$cutoff}", "s.confirmed = 1"];
+if ($use_custom_range) {
+    $from_ts = strtotime($filter_from . ' 00:00:00');
+    $to_ts = $filter_to !== '' ? strtotime($filter_to . ' 23:59:59') : time();
+    $where = ["s.join_date >= {$from_ts}", "s.join_date <= {$to_ts}", "s.confirmed = 1"];
+    $date_label = date('M j', $from_ts) . ' – ' . date('M j, Y', $to_ts);
+} else {
+    $cutoff = time() - ($filter_days_num * 86400);
+    $where = ["s.join_date >= {$cutoff}", "s.confirmed = 1"];
+    $date_label = $filter_days_num . 'd';
+}
 
 if ($filter_list !== 'all') {
     $list_id = (int)$filter_list;
@@ -305,6 +323,51 @@ if ($is_export) {
     exit;
 }
 
+// ============= GOOGLE ADS OFFLINE CONVERSION EXPORT =============
+if ($is_gads_export) {
+    $conv_name = defined('GADS_CONVERSION_NAME') ? GADS_CONVERSION_NAME : 'Engaged Subscriber';
+    $conv_value = defined('GADS_CONVERSION_VALUE') ? GADS_CONVERSION_VALUE : '';
+    $qualify_hours = defined('GADS_QUALIFY_HOURS') ? (int)GADS_QUALIFY_HOURS : 24;
+    $tz_offset = date('P'); // Server timezone offset e.g. +07:00
+
+    header('Content-Type: text/csv');
+    header('Content-Disposition: attachment; filename="gads-conversions-' . date('Y-m-d') . '.csv"');
+
+    $out = fopen('php://output', 'w');
+
+    // Google Ads required columns
+    $header = ['Google Click ID', 'Conversion Name', 'Conversion Time'];
+    if ($conv_value !== '') {
+        $header[] = 'Conversion Value';
+        $header[] = 'Conversion Currency';
+    }
+    fputcsv($out, $header);
+
+    $qualified_count = 0;
+    foreach ($processed as $sub) {
+        // Criteria: has gclid + 1+ opens + signed up 24+ hours ago
+        if (empty($sub['gclid'])) continue;
+        if ($sub['opens_count'] < 1) continue;
+        $hours_since = (time() - (int)$sub['join_date']) / 3600;
+        if ($hours_since < $qualify_hours) continue;
+
+        // Conversion time = when they first opened (use last_activity as proxy)
+        // Format: yyyy-MM-dd HH:mm:ss+TZ
+        $conv_time = date('Y-m-d H:i:s', (int)$sub['timestamp']) . $tz_offset;
+
+        $row = [$sub['gclid'], $conv_name, $conv_time];
+        if ($conv_value !== '') {
+            $row[] = $conv_value;
+            $row[] = 'USD';
+        }
+        fputcsv($out, $row);
+        $qualified_count++;
+    }
+
+    fclose($out);
+    exit;
+}
+
 // ============= RENDER =============
 ?>
 <!DOCTYPE html>
@@ -388,6 +451,7 @@ if ($is_export) {
     <div class="header">
         <h1>Sendy Dashboard</h1>
         <div class="header-links">
+            <a href="?<?= http_build_query(array_merge($_GET, ['export' => 'gads'])) ?>">Google Ads Export</a>
             <a href="?<?= http_build_query(array_merge($_GET, ['export' => 'csv'])) ?>">Export CSV</a>
             <a href="?logout=1">Logout</a>
         </div>
@@ -398,7 +462,7 @@ if ($is_export) {
         <div class="stats-row">
             <div class="stat-card stat-total">
                 <div class="number"><?= $total_all ?></div>
-                <div class="label">Total (<?= $filter_days ?>d)</div>
+                <div class="label">Total (<?= $date_label ?>)</div>
             </div>
             <div class="stat-card stat-engaged">
                 <div class="number"><?= ($stats['engaged'] ?? 0) + ($stats['active'] ?? 0) ?></div>
@@ -422,11 +486,20 @@ if ($is_export) {
         <form method="GET" class="filters">
             <div class="filter-group">
                 <label>Time Range</label>
-                <select name="days">
+                <select name="days" id="days-select">
                     <?php foreach ([1, 3, 7, 14, 30, 60, 90, 180, 365] as $d): ?>
-                    <option value="<?= $d ?>" <?= $filter_days == $d ? 'selected' : '' ?>><?= $d ?> days</option>
+                    <option value="<?= $d ?>" <?= !$use_custom_range && $filter_days_num == $d ? 'selected' : '' ?>><?= $d ?> days</option>
                     <?php endforeach; ?>
+                    <option value="custom" <?= $use_custom_range ? 'selected' : '' ?>>Custom Range</option>
                 </select>
+            </div>
+            <div class="filter-group" id="custom-range" style="<?= $use_custom_range ? '' : 'display:none' ?>">
+                <label>From / To</label>
+                <div style="display:flex;gap:.5rem;align-items:center">
+                    <input type="date" name="from" value="<?= htmlspecialchars($filter_from) ?>" style="width:auto">
+                    <span style="color:#64748b">–</span>
+                    <input type="date" name="to" value="<?= htmlspecialchars($filter_to) ?>" style="width:auto" placeholder="today">
+                </div>
             </div>
             <div class="filter-group">
                 <label>Source</label>
@@ -572,6 +645,15 @@ if ($is_export) {
 
     <script>
     document.addEventListener('DOMContentLoaded', function() {
+        // Custom date range toggle
+        var daysSelect = document.getElementById('days-select');
+        var customRange = document.getElementById('custom-range');
+        if (daysSelect && customRange) {
+            daysSelect.addEventListener('change', function() {
+                customRange.style.display = this.value === 'custom' ? '' : 'none';
+            });
+        }
+
         var table = document.querySelector('table');
         if (!table) return;
 

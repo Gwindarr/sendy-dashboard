@@ -32,3 +32,11 @@ define('TRACK_ARES_ID', 0);
 // These appear as additional options in the Source filter.
 // Example: ['12345678901' => 'Spring 2026 Campaign', '98765432101' => 'Brand Campaign']
 $CUSTOM_CAMPAIGNS = [];
+
+// Optional: Google Ads offline conversion settings.
+// GADS_CONVERSION_NAME must match the conversion action name in your Google Ads account.
+// GADS_CONVERSION_VALUE is the value assigned to each qualified subscriber (optional).
+// GADS_QUALIFY_HOURS is how many hours after signup before a subscriber is evaluated (default: 24).
+define('GADS_CONVERSION_NAME', 'Engaged Subscriber');
+// define('GADS_CONVERSION_VALUE', 5.00);
+// define('GADS_QUALIFY_HOURS', 24);
