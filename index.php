@@ -22,6 +22,7 @@ if (isset($_GET['logout'])) {
 // ============= HANDLE CSV EXPORT FLAG (must be before any output) =============
 $is_export = isset($_GET['export']) && $_GET['export'] === 'csv';
 $is_gads_export = isset($_GET['export']) && $_GET['export'] === 'gads';
+$is_dead_export = isset($_GET['export']) && $_GET['export'] === 'dead';
 
 // ============= CONFIG =============
 // Look for config.php in same directory, or override with SENDY_DASHBOARD_CONFIG env var
@@ -68,6 +69,50 @@ if (!isset($_SESSION['dash_auth']) || $_SESSION['dash_auth'] !== true) {
         exit;
     }
 }
+
+// ============= DEAD LOG =============
+$dead_log_path = __DIR__ . '/dead-log.json';
+
+function read_dead_log(string $path): array {
+    if (!file_exists($path)) return [];
+    $data = json_decode(file_get_contents($path), true);
+    return is_array($data) ? $data : [];
+}
+
+function write_dead_log(string $path, array $entries): bool {
+    return file_put_contents($path, json_encode($entries, JSON_PRETTY_PRINT)) !== false;
+}
+
+// Handle "Mark Dead" POST action
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'mark_dead') {
+    $dead_entries = read_dead_log($dead_log_path);
+    $new_dead = json_decode($_POST['subscribers'] ?? '[]', true);
+
+    if (is_array($new_dead)) {
+        foreach ($new_dead as $entry) {
+            $dead_entries[] = [
+                'email' => $entry['email'] ?? '',
+                'country' => $entry['country'] ?? '',
+                'ip' => $entry['ip'] ?? '',
+                'source' => $entry['source'] ?? '',
+                'campaign_id' => $entry['campaign_id'] ?? '',
+                'gclid' => $entry['gclid'] ?? '',
+                'signup_date' => $entry['signup_date'] ?? '',
+                'removed_date' => date('Y-m-d H:i:s'),
+                'list' => $entry['list'] ?? '',
+            ];
+        }
+        write_dead_log($dead_log_path, $dead_entries);
+    }
+
+    // Return JSON response for AJAX
+    header('Content-Type: application/json');
+    echo json_encode(['success' => true, 'total_dead' => count($dead_entries)]);
+    exit;
+}
+
+$dead_log = read_dead_log($dead_log_path);
+$total_dead_removed = count($dead_log);
 
 // ============= DB CONNECTION =============
 mysqli_report(MYSQLI_REPORT_OFF);
@@ -368,6 +413,37 @@ if ($is_gads_export) {
     exit;
 }
 
+// ============= DEAD LOG EXPORT =============
+// Exports dead log entries — all dead subscribers with gclid for Google reporting
+// Supports &gclid_only=1 to filter to only entries with gclid
+if ($is_dead_export) {
+    $gclid_only = isset($_GET['gclid_only']) && $_GET['gclid_only'] === '1';
+
+    header('Content-Type: text/csv');
+    header('Content-Disposition: attachment; filename="dead-subscribers-' . date('Y-m-d') . '.csv"');
+
+    $out = fopen('php://output', 'w');
+    fputcsv($out, ['Email', 'Country', 'IP', 'Source', 'Campaign ID', 'GCLID', 'List', 'Signed Up', 'Removed']);
+
+    foreach ($dead_log as $dl) {
+        if ($gclid_only && empty($dl['gclid'])) continue;
+        fputcsv($out, [
+            $dl['email'] ?? '',
+            $dl['country'] ?? '',
+            $dl['ip'] ?? '',
+            $dl['source'] ?? '',
+            $dl['campaign_id'] ?? '',
+            $dl['gclid'] ?? '',
+            $dl['list'] ?? '',
+            $dl['signup_date'] ?? '',
+            $dl['removed_date'] ?? '',
+        ]);
+    }
+
+    fclose($out);
+    exit;
+}
+
 // ============= RENDER =============
 ?>
 <!DOCTYPE html>
@@ -480,6 +556,10 @@ if ($is_gads_export) {
                 <div class="number"><?= $total_ads ?></div>
                 <div class="label">From Ads</div>
             </div>
+            <div class="stat-card" style="border-left: 3px solid #dc2626;">
+                <div class="number" style="color:#dc2626" id="dead-removed-count"><?= $total_dead_removed ?></div>
+                <div class="label">Dead Removed (all time)</div>
+            </div>
         </div>
 
         <!-- Filters -->
@@ -547,24 +627,80 @@ if ($is_gads_export) {
             <div class="legend-item"><span class="opens-dot not-sent" style="width:12px;height:12px"></span> Not yet sent</div>
         </div>
 
+        <!-- Dead Log Actions -->
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.75rem">
+            <div>
+                <button type="button" class="btn" id="mark-dead-btn" style="background:#dc2626;display:none" onclick="markSelectedDead()">
+                    Mark Selected as Dead (<span id="selected-count">0</span>)
+                </button>
+                <span id="mark-dead-status" style="font-size:.85rem;color:#16a34a;margin-left:.75rem;display:none"></span>
+            </div>
+            <div style="display:flex;gap:.75rem;align-items:center">
+                <?php if ($total_dead_removed > 0): ?>
+                <a href="?export=dead" style="font-size:.8rem;color:#64748b;text-decoration:none;border:1px solid #e2e8f0;padding:.4rem .75rem;border-radius:6px">Export Dead CSV</a>
+                <a href="?export=dead&gclid_only=1" style="font-size:.8rem;color:#1d4ed8;text-decoration:none;border:1px solid #dbeafe;padding:.4rem .75rem;border-radius:6px;background:#eff6ff">Export Dead w/ GCLID</a>
+                <?php endif; ?>
+                <button type="button" style="background:none;border:1px solid #e2e8f0;padding:.4rem .75rem;border-radius:6px;font-size:.8rem;color:#64748b;cursor:pointer" onclick="toggleDeadLog()">
+                    Dead Log (<?= $total_dead_removed ?>)
+                </button>
+            </div>
+        </div>
+
+        <!-- Dead Log History (collapsed by default) -->
+        <div id="dead-log-section" style="display:none;margin-bottom:1.5rem">
+            <div class="table-wrap">
+                <?php if (empty($dead_log)): ?>
+                    <div class="empty-state">No dead subscribers logged yet.</div>
+                <?php else: ?>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Email</th>
+                            <th>Country</th>
+                            <th>Source</th>
+                            <th>GCLID</th>
+                            <th>List</th>
+                            <th>Signed Up</th>
+                            <th>Removed</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach (array_reverse($dead_log) as $dl): ?>
+                        <tr>
+                            <td class="email-cell"><?= htmlspecialchars($dl['email'] ?? '') ?></td>
+                            <td><?= htmlspecialchars($dl['country'] ?? '') ?></td>
+                            <td class="source-cell"><?= htmlspecialchars($dl['source'] ?? '') ?></td>
+                            <td style="font-size:.7rem;max-width:120px;overflow:hidden;text-overflow:ellipsis" title="<?= htmlspecialchars($dl['gclid'] ?? '') ?>"><?= htmlspecialchars($dl['gclid'] ?? '') ?: '—' ?></td>
+                            <td style="font-size:.8rem"><?= htmlspecialchars($dl['list'] ?? '') ?></td>
+                            <td><?= htmlspecialchars($dl['signup_date'] ?? '') ?></td>
+                            <td><?= htmlspecialchars($dl['removed_date'] ?? '') ?></td>
+                        </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+                <?php endif; ?>
+            </div>
+        </div>
+
         <!-- Table -->
         <div class="table-wrap">
             <?php if (empty($processed)): ?>
                 <div class="empty-state">No subscribers found matching your filters.</div>
             <?php else: ?>
-            <table>
+            <table id="main-table">
                 <thead>
                     <tr>
-                        <th data-col="0" data-type="text">Email <span class="sort-arrow">&#9650;&#9660;</span></th>
-                        <th data-col="1" data-type="text">Name <span class="sort-arrow">&#9650;&#9660;</span></th>
-                        <th data-col="2" data-type="text">Country <span class="sort-arrow">&#9650;&#9660;</span></th>
-                        <th data-col="3" data-type="text">IP <span class="sort-arrow">&#9650;&#9660;</span></th>
-                        <th data-col="4" data-type="num">Signed Up <span class="sort-arrow">&#9650;&#9660;</span></th>
-                        <th data-col="5" data-type="num">Last Activity <span class="sort-arrow">&#9650;&#9660;</span></th>
-                        <th data-col="6" data-type="text">Source <span class="sort-arrow">&#9650;&#9660;</span></th>
-                        <th data-col="7" data-type="text">List <span class="sort-arrow">&#9650;&#9660;</span></th>
-                        <th data-col="8" data-type="num">Opens (<?= $total_ar_emails ?>) <span class="sort-arrow">&#9650;&#9660;</span></th>
-                        <th data-col="9" data-type="num">Status <span class="sort-arrow">&#9650;&#9660;</span></th>
+                        <th style="width:30px;cursor:default" data-col="-1"><input type="checkbox" id="select-all" onchange="toggleSelectAll(this)"></th>
+                        <th data-col="1" data-type="text">Email <span class="sort-arrow">&#9650;&#9660;</span></th>
+                        <th data-col="2" data-type="text">Name <span class="sort-arrow">&#9650;&#9660;</span></th>
+                        <th data-col="3" data-type="text">Country <span class="sort-arrow">&#9650;&#9660;</span></th>
+                        <th data-col="4" data-type="text">IP <span class="sort-arrow">&#9650;&#9660;</span></th>
+                        <th data-col="5" data-type="num">Signed Up <span class="sort-arrow">&#9650;&#9660;</span></th>
+                        <th data-col="6" data-type="num">Last Activity <span class="sort-arrow">&#9650;&#9660;</span></th>
+                        <th data-col="7" data-type="text">Source <span class="sort-arrow">&#9650;&#9660;</span></th>
+                        <th data-col="8" data-type="text">List <span class="sort-arrow">&#9650;&#9660;</span></th>
+                        <th data-col="9" data-type="num">Opens (<?= $total_ar_emails ?>) <span class="sort-arrow">&#9650;&#9660;</span></th>
+                        <th data-col="10" data-type="num">Status <span class="sort-arrow">&#9650;&#9660;</span></th>
                     </tr>
                 </thead>
                 <tbody>
@@ -577,10 +713,21 @@ if ($is_gads_export) {
                         $status_order = ['engaged'=>1,'active'=>2,'pending'=>3,'warming'=>4,'dead'=>5];
                     ?>
                     <tr>
+                        <td>
+                            <input type="checkbox" class="dead-check" onchange="updateSelectedCount()"
+                                data-email="<?= htmlspecialchars($sub['email']) ?>"
+                                data-country="<?= htmlspecialchars($sub['country'] ?: '') ?>"
+                                data-ip="<?= htmlspecialchars($sub['ip'] ?? '') ?>"
+                                data-source="<?= htmlspecialchars($sub['source_label']) ?>"
+                                data-campaign="<?= htmlspecialchars($sub['campaign_id']) ?>"
+                                data-gclid="<?= htmlspecialchars($sub['gclid']) ?>"
+                                data-signup="<?= date('Y-m-d H:i', (int)$sub['join_date']) ?>"
+                                data-list="<?= htmlspecialchars($lists[(int)$sub['list']] ?? 'Unknown') ?>">
+                        </td>
                         <td class="email-cell" data-sort="<?= htmlspecialchars($sub['email']) ?>">
                             <?= htmlspecialchars($sub['email']) ?>
                             <?php if ($sub['gclid']): ?>
-                                <br><span class="gclid-badge">gclid</span>
+                                <br><span class="gclid-badge tooltip" data-tip="<?= htmlspecialchars($sub['gclid']) ?>">gclid</span>
                             <?php endif; ?>
                         </td>
                         <td data-sort="<?= htmlspecialchars($sub['name'] ?: '') ?>"><?= htmlspecialchars($sub['name'] ?: '—') ?></td>
@@ -701,6 +848,68 @@ if ($is_gads_export) {
             });
         });
     });
+
+    function toggleSelectAll(el) {
+        document.querySelectorAll('.dead-check').forEach(function(cb) { cb.checked = el.checked; });
+        updateSelectedCount();
+    }
+
+    function updateSelectedCount() {
+        var count = document.querySelectorAll('.dead-check:checked').length;
+        document.getElementById('selected-count').textContent = count;
+        document.getElementById('mark-dead-btn').style.display = count > 0 ? '' : 'none';
+    }
+
+    function markSelectedDead() {
+        var checked = document.querySelectorAll('.dead-check:checked');
+        if (checked.length === 0) return;
+
+        var subs = [];
+        checked.forEach(function(cb) {
+            subs.push({
+                email: cb.dataset.email,
+                country: cb.dataset.country,
+                ip: cb.dataset.ip,
+                source: cb.dataset.source,
+                campaign_id: cb.dataset.campaign,
+                gclid: cb.dataset.gclid || '',
+                signup_date: cb.dataset.signup,
+                list: cb.dataset.list
+            });
+        });
+
+        if (!confirm('Log ' + subs.length + ' subscriber(s) as dead?\n\nThis only logs them in the dashboard — you still need to unsubscribe them in Sendy.')) return;
+
+        var form = new FormData();
+        form.append('action', 'mark_dead');
+        form.append('subscribers', JSON.stringify(subs));
+
+        fetch(window.location.pathname, { method: 'POST', body: form })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (data.success) {
+                    var status = document.getElementById('mark-dead-status');
+                    status.textContent = subs.length + ' logged as dead. Total removed: ' + data.total_dead;
+                    status.style.display = '';
+                    document.getElementById('dead-removed-count').textContent = data.total_dead;
+
+                    // Fade out the checked rows
+                    checked.forEach(function(cb) {
+                        var row = cb.closest('tr');
+                        row.style.opacity = '0.3';
+                        row.style.textDecoration = 'line-through';
+                        cb.checked = false;
+                        cb.disabled = true;
+                    });
+                    updateSelectedCount();
+                }
+            });
+    }
+
+    function toggleDeadLog() {
+        var el = document.getElementById('dead-log-section');
+        el.style.display = el.style.display === 'none' ? '' : 'none';
+    }
     </script>
 </body>
 </html>

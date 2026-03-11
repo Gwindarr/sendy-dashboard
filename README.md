@@ -9,9 +9,10 @@ Sendy tracks autoresponder opens in its database but doesn't expose this data in
 - **Engagement status** for every subscriber: Engaged, Active, Pending, Warming, or Dead
 - **Visual open tracking** — a dot grid showing which autoresponder emails each subscriber opened
 - **Google Ads attribution** — identifies subscribers who came from Google Ads (via gclid in the referrer)
-- **Filters** — by time range, source (ads/organic), list, engagement status, and email search
+- **Filters** — by time range (preset or custom date range), source (ads/organic), list, engagement status, and email search
 - **Sortable columns** — click any column header to sort
-- **CSV export** — download filtered results for use in Google Ads offline conversions or other tools
+- **CSV export** — download filtered results for use in spreadsheets or other tools
+- **Google Ads offline conversion export** — one-click CSV export of qualified subscribers (has gclid, 1+ opens, 24+ hours old) in Google Ads offline conversion import format
 - **"No activity" flag** — highlights subscribers whose last activity timestamp matches their signup (meaning they never opened anything)
 
 ## Why this exists
@@ -103,6 +104,9 @@ Go to `https://yoursite.com/sendy-dashboard/` and log in with the password you s
 | `DB_CHARSET` | No | Database charset (default: `utf8`) |
 | `TRACK_ARES_ID` | No | Autoresponder sequence ID to track. Set to `0` (default) to auto-detect the sequence with the most emails. |
 | `$CUSTOM_CAMPAIGNS` | No | Array of Google Ads campaign IDs to add to the Source filter dropdown. Format: `['campaign_id' => 'Display Label']` |
+| `GADS_CONVERSION_NAME` | No | Conversion action name for Google Ads export (default: `Engaged Subscriber`) |
+| `GADS_CONVERSION_VALUE` | No | Optional conversion value in USD. If set, adds Value and Currency columns to the export. |
+| `GADS_QUALIFY_HOURS` | No | Minimum hours since signup before a subscriber qualifies for export (default: `24`) |
 
 ## How engagement status works
 
@@ -130,6 +134,14 @@ If your signup forms pass the Google Ads click ID (`gclid`) in the referrer fiel
 - Display the Google Ads campaign ID (if `campaignid=` is in the referrer)
 - Let you filter to show only ad-sourced subscribers
 - Include gclid in CSV exports (useful for Google Ads offline conversion imports)
+
+## Google Ads offline conversion export
+
+If your subscribers arrive via Google Ads (with `gclid` in the referrer), you can export qualified subscribers as a CSV for Google Ads offline conversion import. Click "Google Ads Export" in the header.
+
+A subscriber qualifies when they have a gclid, have opened at least 1 autoresponder email, and signed up more than 24 hours ago (configurable via `GADS_QUALIFY_HOURS`). The export uses the subscriber's last activity timestamp as the conversion time.
+
+To import: in Google Ads, go to Tools → Conversions → Uploads, and upload the CSV. You'll need a conversion action matching your `GADS_CONVERSION_NAME` setting.
 
 ## Important notes
 
